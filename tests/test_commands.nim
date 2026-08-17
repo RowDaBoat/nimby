@@ -455,3 +455,97 @@ suite "`nimby update` should":
 
     check bittyPresent == bittyActual
     check ntpPresent == ntpActual
+
+suite "`nimby doctor` should":
+  setup:
+    setupTestPackages()
+    clean()
+
+  test "fail when no workspace exists":
+    let output = cmdFail("nimby doctor")
+    check output.contains("No Nimby workspace found")
+
+  test "fail when nim.cfg is not managed by Nimby":
+    writeFile(testWorkspace / "nim.cfg", "--path:\"something/src\"\n")
+    let output = cmdFail("nimby doctor")
+    check output.contains("No Nimby workspace found")
+
+  test "report unexpected lines in nim.cfg":
+    cmd("nimby create")
+    let nimCfg = readFile(testWorkspace / "nim.cfg")
+    writeFile(testWorkspace / "nim.cfg", nimCfg & "some garbage line\n")
+    let output = cmd("nimby doctor")
+    check output.contains("Unexpected line in nim.cfg")
+
+  test "report package linked in nim.cfg but missing from disk":
+    cmd("nimby create")
+    let nimCfg = readFile(testWorkspace / "nim.cfg")
+    writeFile(testWorkspace / "nim.cfg", nimCfg & "--path:\"ghost/src\"\n")
+    let output = cmd("nimby doctor")
+    check output.contains("ghost")
+    check output.contains("missing from disk")
+
+  test "report missing dependency for a package":
+    createTestPackage("dep")
+    createTestPackage("myapp", requires = [&"file://{testPackagesDir}/dep"])
+    cmd(&"nimby install file://{testPackagesDir}/myapp")
+    removeDir(testWorkspace / "dep")
+    let output = cmd("nimby doctor")
+    check output.contains("dep")
+    check output.contains("not found for package")
+
+  test "report package with no .nimble file":
+    cmd("nimby create")
+    createDir(testWorkspace / "notnim")
+    let nimCfg = readFile(testWorkspace / "nim.cfg")
+    writeFile(testWorkspace / "nim.cfg", nimCfg & "--path:\"notnim/src\"\n")
+    let output = cmd("nimby doctor")
+    check output.contains("notnim")
+    check output.contains("no .nimble file")
+
+  test "report package not linked in nim.cfg":
+    createTestPackage("myapp")
+    cmd(&"nimby install file://{testPackagesDir}/myapp")
+    writeFile(testWorkspace / "nim.cfg", "# Managed by Nimby\n")
+    let output = cmd("nimby doctor")
+    check output.contains("myapp")
+    check output.contains("not linked in nim.cfg")
+
+  test "report orphan directories not in nim.cfg":
+    cmd("nimby create")
+    createDir(testWorkspace / "stray")
+    let output = cmd("nimby doctor")
+    check output.contains("stray/")
+    check output.contains("not linked in nim.cfg")
+
+  test "report missing dependency for a named package":
+    createTestPackage("dep")
+    createTestPackage("myapp", requires = [&"file://{testPackagesDir}/dep"])
+    cmd(&"nimby install file://{testPackagesDir}/myapp")
+    removeDir(testWorkspace / "dep")
+    let output = cmd("nimby doctor myapp")
+    check output.contains("dep")
+    check output.contains("not found for package")
+
+  test "report named package not linked in nim.cfg":
+    createTestPackage("myapp")
+    cmd(&"nimby install file://{testPackagesDir}/myapp")
+    writeFile(testWorkspace / "nim.cfg", "# Managed by Nimby\n")
+    let output = cmd("nimby doctor myapp")
+    check output.contains("myapp")
+    check output.contains("not linked in nim.cfg")
+
+  test "fail when named package directory does not exist":
+    cmd("nimby create")
+    let output = cmdFail("nimby doctor ghost")
+    check output.contains("ghost")
+    check output.contains("not found")
+
+  test "work from a subdirectory of the workspace":
+    cmd("nimby create")
+    createDir(testWorkspace / "stray")
+    let nested = testWorkspace / "subdir"
+    createDir(nested)
+    let output = cmdAt(nested, "nimby doctor")
+    check output.contains("stray/")
+    check output.contains("not linked in nim.cfg")

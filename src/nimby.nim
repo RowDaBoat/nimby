@@ -953,66 +953,80 @@ proc treePackages(name: string) =
         if kind == pcDir:
           treePackage(path.extractFilename(), "")
 
-proc checkPackage(name: string) =
-  ## Check a package.
-  try:
-    let nimbleFile = getNimbleFile(name)
-    for dependency in nimbleFile.dependencies:
-      if not dirExists(dependency.name):
-        print &"Dependency `{dependency.name}` not found for package `{name}`."
-    if not fileExists(workspaceFile):
-      nimbyQuit(&"Package `nim.cfg` not found.")
-    let nimCfg = readFileSafe(workspaceFile)
-    if not nimCfg.contains(&"--path:\"{name}/") and not nimCfg.contains(&"--path:\"{name}\""):
-      print &"Package `{name}` not found in nim.cfg."
-  except NimbleFileNotFound:
-    print &"Package '{name}' is not a Nim project (no .nimble file found)."
+proc checkMissingDeps(name: string) =
+  ## Check that all dependencies listed in .nimble are present.
+  let nimblePath = name / name & ".nimble"
+  if not fileExists(nimblePath):
+    print &"Package `{name}` has no .nimble file."
+    print &"  Run: nimby remove {name}"
+    return
+  let nimbleFile = parseNimbleFile(nimblePath)
+  for dependency in nimbleFile.dependencies:
+    if not dirExists(dependency.name):
+      print &"Dependency `{dependency.name}` not found for package `{name}`."
+      print &"  Run: nimby install {dependency.name}"
+
+proc checkNimCfgLinking(name: string) =
+  ## Check that the package has a --path entry in nim.cfg.
+  let nimCfg = readFileSafe(workspaceFile)
+  if not nimCfg.contains(&"--path:\"{name}/") and not nimCfg.contains(&"--path:\"{name}\""):
+    print &"Package `{name}` not linked in nim.cfg."
+    print &"  Run: nimby install {name}"
+
+proc checkNimCfgFormat(lines: seq[string]): seq[string] =
+  ## Check nim.cfg lines are valid --path entries, return package names.
+  for line in lines[1 .. lines.high]:
+    if line.startsWith("--path:\""):
+      var stop = line.find('/')
+      if stop == -1:
+        stop = line.high
+      result.add(line[8 .. stop - 1])
+    else:
+      if line != "":
+        print &"Unexpected line in nim.cfg: \"{line}\""
+        print &"  Remove the line manually from nim.cfg."
+
+proc checkPackageDirExists(name: string) =
+  ## Check that the package directory exists on disk.
+  if not dirExists(name):
+    print &"Package `{name}` is linked in nim.cfg but missing from disk."
+    print &"  Run: nimby install {name}"
+
+proc checkOrphanDirs(names: seq[string]) =
+  ## Check for directories not referenced in nim.cfg.
+  var orphans: seq[string]
+  for kind, path in walkDir("."):
+    if kind == pcDir:
+      let dir = path.extractFilename()
+      if dir notin names:
+        orphans.add(dir)
+  if orphans.len > 0:
+    print &"{orphans.len} dir(s) not linked in nim.cfg:"
+    for dir in orphans:
+      print &"  {dir}/"
+    print &"  Run: nimby install <package> to link, or remove the directory."
 
 proc doctorPackage(name: string) =
   ## Diagnose packages and fix configuration issues.
-  # Walk through all packages.
-  # Ensure the workspace root has a nim.cfg entry.
-  # Ensure all dependencies are installed.
-  prepareWorkspace()
+  let workspace = findWorkspace(getCurrentDir(), autoCreate = false)
+  setCurrentDir(workspace)
+
   if name != "":
     if not dirExists(name):
       nimbyQuit(&"Package `{name}` not found.")
-    checkPackage(name)
-  else:
-    var lines: seq[string]
-    if fileExists(workspaceFile):
-      let cfg = readFile(workspaceFile)
-      lines = cfg.split('\n')
+    checkMissingDeps(name)
+    checkNimCfgLinking(name)
+    return
 
-    if lines.len == 0 or not hasMarker(lines.join("\n")):
-      nimbyQuit("Working dir is not a Nimby workspace")
+  let lines = readFile(workspaceFile).split('\n')
+  let packageNames = checkNimCfgFormat(lines)
 
-    var names: seq[string]
-    for line in lines[1 .. lines.high]:
-      if line.startsWith("--path:\""):
-        var stop = line.find('/')
-        if stop == -1:
-          stop = line.high
-        names.add(line[8 .. stop - 1])
-      else:
-        if line != "":
-          echo "Unexpected line in workspace nim.cfg: \"" & line & '"'
+  for packageName in packageNames:
+    checkPackageDirExists(packageName)
+    checkMissingDeps(packageName)
+    checkNimCfgLinking(packageName)
 
-    for name in names:
-      checkPackage(name)
-
-    var nonworkspaceDirs: seq[string]
-    for kind, path in walkDir("."):
-      if kind == pcDir:
-        let dir = path.extractFilename()
-        if dir notin names:
-          nonworkspaceDirs.add(dir)
-
-    if nonworkspaceDirs.len > 0:
-      echo nonworkspaceDirs.len, " dir(s) not in workspace nim.cfg"
-      if verbose:
-        for dir in nonworkspaceDirs:
-          echo dir, '/'
+  checkOrphanDirs(packageNames)
 
 proc lockPackage(name: string) =
   ## Generate a lock file for a package.
