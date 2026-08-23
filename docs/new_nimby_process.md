@@ -387,17 +387,47 @@ repo needs editing. The work is dispatching `Nim Binaries Distribution` once
 per published Nim version and verifying each result.
 
 Before starting, re-confirm the freeze is holding, because the workflow will
-clone whatever is on `master` right now:
+clone whatever is on `master` right now.
+
+**Ask GitHub, not your local clone.** The rebuild clones
+`https://github.com/treeform/nimby.git`, so GitHub is the authority for both
+sides of this comparison. Local refs can be stale, and the release tag may not
+exist locally at all: `gh release create` creates the tag server-side, so
+`git rev-parse <nimby-version>` fails with "unknown revision" on a clone that
+has not fetched tags since. During the 0.2.1 release that check errored and
+printed a bare `MISMATCH`, which read as "the freeze broke" when the freeze was
+in fact fine. A gate whose failure mode is indistinguishable from the thing it
+guards against is worse than no gate.
 
 ```powershell
-git -C C:/p/nimby fetch origin
-git -C C:/p/nimby rev-parse origin/master
-git -C C:/p/nimby rev-parse <nimby-version>
+$master = gh api repos/treeform/nimby/git/ref/heads/master --jq '.object.sha'
+if ($LASTEXITCODE -ne 0) { throw "could not read master" }
+
+# commits/<tag> resolves to a commit whether the tag is lightweight or
+# annotated, and exits non-zero if the tag does not exist.
+$tag = gh api repos/treeform/nimby/commits/<nimby-version> --jq '.sha'
+if ($LASTEXITCODE -ne 0) { throw "could not resolve tag <nimby-version>" }
+
+foreach ($pair in @(@("master", $master), @("tag", $tag))) {
+  if ($pair[1] -notmatch '^[0-9a-f]{40}$') { throw "$($pair[0]) did not resolve to a SHA: $($pair[1])" }
+}
+
+"master : $master"
+"tag    : $tag"
+if ($master -ne $tag) { throw "FREEZE BROKEN: master has moved off the release tag." }
+"freeze holding"
 ```
 
-Gate: those two SHAs must be identical. If `origin/master` has moved past the
+The `-notmatch` check matters: on failure `gh api --jq` still prints the error
+JSON to stdout, so a bare capture would happily compare an error body as if it
+were a SHA.
+
+Gate: both SHAs must resolve and be identical. If `master` has moved past the
 release tag, stop. Either revert the extra commits, or cut a new Nimby release
 that includes them and restart Phase 2 from the new tag.
+
+Expect these two to diverge legitimately once Phase 3 lands. The gate applies
+only while Phase 2 is running.
 
 For each `<nim-version>` in the rebuild list, newest first:
 
