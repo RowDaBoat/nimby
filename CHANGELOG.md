@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+
+#### `nimby install -g` produced packages nim could not find
+
+0.2.0 stopped `-g` writing any `nim.cfg`, which left globally installed
+packages on disk but invisible to the compiler. The install reported success
+and the build then failed with `cannot open file: <dep>`.
+
+`-g` decides where package files are stored, and nothing else. The `--path:`
+entries still have to be written somewhere, and the only candidates are the
+workspace or the package's own folder. Writing into the package folder is what
+0.2.0 set out to stop, so a workspace is required for `-g` exactly as it is
+for a normal install.
+
+Inside a Git checkout or Nimble package with no workspace, `nimby install -g`
+now refuses with the same message a normal install gives, instead of silently
+producing an unusable install.
+
+This reverses the 0.2.0 note below about `-g` leaving your local `nim.cfg`
+alone. `-g` does write to the workspace `nim.cfg`; what it will not do is
+create one inside a package.
+
 ## 0.2.0
 
 First release since 0.1.27 (2026-05-24). Workspaces changed enough to justify
@@ -36,18 +60,18 @@ workspace outside the checkout instead:
 - uses: actions/checkout@v5
 - uses: treeform/setup-nim-action@v6
 
-- name: Create a Nimby workspace
-  shell: bash
-  run: |
-    mkdir -p "${{ runner.temp }}/workspace"
-    cd "${{ runner.temp }}/workspace"
-    nimby create
-
 - name: Install dependencies
   shell: bash
-  working-directory: ${{ runner.temp }}/workspace
-  run: nimby install mypackage
+  run: |
+    cd ..
+    nimby create
+    nimby install mypackage
 ```
+
+The workspace has to be the *parent* of your checkout, so that your repository
+sits inside it alongside its dependencies and nim finds the `nim.cfg` by
+walking up. A workspace somewhere else, such as under `RUNNER_TEMP`, will
+install the packages but your own build will not see them.
 
 Locally the same rule applies: run `nimby create` in the directory you want as
 the workspace root, with your project as one of its children.
@@ -57,6 +81,10 @@ the workspace root, with your project as one of its children.
 Global installs could previously create or modify a `nim.cfg` in the current
 directory, including inside a Git checkout. They now leave the local workspace
 alone.
+
+Superseded in 0.2.1: this went too far and made globally installed packages
+invisible to nim. `-g` writes to the workspace `nim.cfg` again; it just refuses
+to create one inside a package.
 
 ### Added
 
