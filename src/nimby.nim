@@ -19,6 +19,14 @@ type
   NimbyError* = object of CatchableError
   NimbleFileNotFound* = object of NimbyError
 
+  Job = object
+    ## A queued unit of work. `name` is the identity, `argument` is the
+    ## instruction: the same package can be asked for as a bare name, as a
+    ## URL, or as a URL with a branch fragment, and the fragment has to survive
+    ## to the clone even though it must not take part in identity.
+    name: string      ## Package directory this job installs into.
+    argument: string  ## Original requirement string, acted on by fetchPackage.
+
   Dependency* = object
     name*: string
     url*: string
@@ -47,12 +55,12 @@ var
   retryLock: Lock
   cloneLock: Lock
 
-  jobQueue: Deque[string]
+  # Queued, running, done. All three are keyed on the job name, never on the
+  # raw argument, so the same package spelled two different ways is one job in
+  # exactly one of these states. See jobNameOf.
+  jobQueue: Deque[Job]
   jobsInProgress: HashSet[string]
-  # Target directory names that have ever been enqueued. Keyed on the resolved
-  # name, not the raw argument, so the same package spelled two different ways
-  # is still one job. See targetNameOf.
-  jobsSeen: HashSet[string]
+  jobsComplete: HashSet[string]
 
   cloneCounter: int
 
@@ -436,8 +444,9 @@ proc promptYesNo(message: string, defaultYes: bool = true): bool =
 proc fetchPackage(argument: string) {.gcsafe.}
 proc addTreeToConfig(path: string) {.gcsafe.}
 
-proc targetNameOf(argument: string): string =
-  ## The on-disk directory name an enqueued argument will end up installing to.
+proc jobNameOf(argument: string): string =
+  ## The on-disk directory name an enqueued argument will end up installing to,
+  ## which is the job's identity.
   ## Mirrors the dispatch in fetchPackage.
   ##
   ## Two arguments that name the same directory are the same job even when they
@@ -454,16 +463,29 @@ proc targetNameOf(argument: string): string =
     return parseGitUrl(argument).packageName
   return argument
 
+proc isQueued(name: string): bool {.gcsafe.} =
+  ## Whether the queue already holds a job with this name. The queue holds jobs
+  ## rather than bare names, so this cannot be a plain `notin`. Left as a linear
+  ## scan: the queue is a handful of entries deep.
+  ##
+  ## Must be called with jobLock held.
+  {.gcsafe.}:
+    for job in jobQueue:
+      if job.name == name:
+        return true
+  return false
+
 proc enqueuePackage(packageName: string) =
-  ## Add a package to the job queue. Ensure its target is not already queued,
-  ## in progress, or done.
+  ## Add a package to the job queue. Ensure its job name is not already queued,
+  ## in progress, or complete.
   withLock(jobLock):
-    let target = targetNameOf(packageName)
-    if target notin jobsSeen:
-      jobsSeen.incl(target)
-      jobQueue.addLast(packageName)
+    let name = jobNameOf(packageName)
+    if not isQueued(name) and
+        name notin jobsInProgress and
+        name notin jobsComplete:
+      jobQueue.addLast(Job(name: name, argument: packageName))
     else:
-      info &"Package already in queue: {packageName} (target: {target})"
+      info &"Package already in queue: {packageName} (job: {name})"
 
 proc enqueuePackage(dep: Dependency) =
   if dep.url != "":
@@ -472,13 +494,12 @@ proc enqueuePackage(dep: Dependency) =
   else:
     enqueuePackage(dep.name)
 
-proc popPackage(): string =
-  ## Pop a package from the job queue or return an empty string.
+proc popPackage(): Job =
+  ## Pop a job from the queue, or return an empty job if there is nothing to do.
   withLock(jobLock):
     if jobQueue.len > 0:
       result = jobQueue.popFirst()
-    if result != "":
-      jobsInProgress.incl(result)
+      jobsInProgress.incl(result.name)
 
 proc readGitHash(packageName: string): string =
   ## Read the Git hash of a package.
@@ -508,8 +529,8 @@ proc fetchDeps(packageName: string) =
 proc worker(id: int) {.thread.} =
   ## Worker thread that processes packages from the queue.
   while true:
-    let pkg = popPackage()
-    if pkg.len == 0:
+    let job = popPackage()
+    if job.argument.len == 0:
       var done: bool
       withLock(jobLock):
         done = (jobsInProgress.len == 0)
@@ -518,10 +539,11 @@ proc worker(id: int) {.thread.} =
       sleep(20)
       continue
 
-    fetchPackage(pkg)
+    fetchPackage(job.argument)
 
     withLock(jobLock):
-      jobsInProgress.excl(pkg)
+      jobsInProgress.excl(job.name)
+      jobsComplete.incl(job.name)
 
 proc addConfigDir(path: string) =
   ## Add a directory to the nim.cfg file.
