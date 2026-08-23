@@ -7,10 +7,18 @@ on:
 jobs:
   test:
     strategy:
+      # Report every platform, do not cancel the rest on the first failure.
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             container: quay.io/pypa/manylinux_2_34_x86_64
+          - os: ubuntu-22.04-arm
+            container: quay.io/pypa/manylinux_2_34_aarch64
+          - os: macos-latest
+            container: null
+          - os: windows-latest
+            container: null
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     steps:
@@ -22,16 +30,31 @@ jobs:
       - uses: treeform/setup-nim-action@v6
 
       - name: Build Nimby
+        shell: bash
         run: nim c -d:release -d:monkey src/nimby.nim
 
-      - name: Add Nimby to PATH
+      - name: Add Nimby to PATH (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
         run: echo "$PWD/src" >> "$GITHUB_PATH"
 
+      - name: Add Nimby to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "$(cygpath -w "$PWD")\src" >> "$GITHUB_PATH"
+
+      - name: Print Nimby version
+        shell: bash
+        run: nimby --version
+
       - name: Run Nimby Unit Tests
+        shell: bash
         run: nim r tests/test_parsing.nim
 
       - name: Test isolated Git configuration
+        shell: bash
         run: nim r tests/test_gitconfig.nim
 
       - name: Run Nimby Functional Tests
+        shell: bash
         run: nim r tests/test_commands.nim

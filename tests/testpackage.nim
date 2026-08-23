@@ -63,8 +63,8 @@ requires "nim >= 2.0.0"
     &"{GitCommit} -m \"Initial commit for {name}\"",
   ]
 
-  for i in [1 ..< commits]:
-    commands.add &"{GitCommit} --allow-empty -m 'Commit {i}'"
+  for i in 1 ..< commits:
+    commands.add &"{GitCommit} --allow-empty -m \"Commit {i}\""
 
   for command in commands:
     let (output, exitCode) = execCmdEx(command, workingDir = packageDir)
