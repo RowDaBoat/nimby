@@ -321,7 +321,7 @@ suite "`nimby c` should":
     writeFile(testWorkspace / "myapp" / "nimby.lock", cmd("nimby lock myapp"))
 
     let (_, _) = execCmdEx(
-      GitCommit & " --allow-empty -m 'advance'",
+      GitCommit & " --allow-empty -m \"advance\"",
       workingDir = testWorkspace / "dep"
     )
 
@@ -344,8 +344,11 @@ suite "`nimby c` should":
     cmd("nimby create")
     createTestPackage("myapp")
     writeFile(testPackagesDir / "myapp" / "src" / "myapp.nim", "this is not valid nim\n")
-    let (_, _) = execCmdEx("git add -A && " & GitCommit & " -m 'broken source'",
-      workingDir = testPackagesDir / "myapp")
+    # Not chained with `&&`: execCmdEx uses poEvalCommand, which on Windows
+    # bypasses the shell, so `&&` would be passed to `git add` as an argument.
+    let packageDir = testPackagesDir / "myapp"
+    discard execCmdEx("git add -A", workingDir = packageDir)
+    discard execCmdEx(GitCommit & " -m \"broken source\"", workingDir = packageDir)
 
     cmd(&"nimby install file://{testPackagesDir}/myapp")
     writeFile(testWorkspace / "myapp" / "nimby.lock", "")
