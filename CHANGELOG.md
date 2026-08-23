@@ -26,6 +26,32 @@ subdirectory.
 The marker line in `nim.cfg` is now `# Managed by Nimby`. Workspaces marked
 `# Created by Nimby` are still recognized, so there is nothing to migrate.
 
+**Migrating CI.** If your workflow checks out a repository and then runs
+`nimby install` in the checkout root, it will now fail. That pattern was
+quietly wrong before: Nimby installs packages as siblings of the workspace
+root, so it was writing package directories into your repository. Create the
+workspace outside the checkout instead:
+
+```yaml
+- uses: actions/checkout@v5
+- uses: treeform/setup-nim-action@v6
+
+- name: Create a Nimby workspace
+  shell: bash
+  run: |
+    mkdir -p "${{ runner.temp }}/workspace"
+    cd "${{ runner.temp }}/workspace"
+    nimby create
+
+- name: Install dependencies
+  shell: bash
+  working-directory: ${{ runner.temp }}/workspace
+  run: nimby install mypackage
+```
+
+Locally the same rule applies: run `nimby create` in the directory you want as
+the workspace root, with your project as one of its children.
+
 #### `-g` no longer touches your local `nim.cfg`
 
 Global installs could previously create or modify a `nim.cfg` in the current

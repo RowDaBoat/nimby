@@ -320,7 +320,22 @@ version edits.
    'release'`. A manual dispatch builds the binaries and uploads nothing. Use a
    pushed tag or a published GitHub release for the real release.
 
-   Gate: the release workflow must finish successfully.
+   **Expect two runs, not one.** The workflow triggers on both
+   `release: types: [published]` and `push: tags: ["*"]`, so a single
+   `gh release create` starts two runs that build the same artifacts and upload
+   the same asset names concurrently. On the 0.2.0 release both finished
+   successfully and the assets came out correct, but nothing makes that
+   guaranteed: two jobs racing to replace the same asset is luck, not design.
+
+   Gate: **every** triggered run must finish successfully, not just the first
+   one you notice. List them explicitly rather than assuming there is one:
+
+   ```powershell
+   gh run list --repo treeform/nimby --workflow release.yml --limit 5
+   ```
+
+   If this repo is ever tidied up, dropping the `push: tags` trigger and
+   keeping only `release: published` removes the race.
 
    Note that this workflow uses `treeform/setup-nim-action@v6`, which downloads
    a Nim distribution that still contains the *old* Nimby. That is fine and
@@ -357,6 +372,15 @@ version edits.
 Repo: `C:/p/nimby-nim-builds`
 
 GitHub: `treeform/nimby-nim-builds`
+
+**Phase 2 runs before Phase 3. Do not reorder them.** It is tempting to bump
+the README links and `NIMBY_VERSION` right after the release is published,
+since the assets now exist. Doing that moves `master` off the release tag, and
+the gate immediately below this paragraph then fails — correctly, because the
+rebuilds clone `master` unpinned and would bake an unreleased commit into the
+distributions. Hold those edits, uncommitted, until Phase 2 is finished. This
+was misordered once while running the 0.2.0 release and only the SHA gate
+caught it.
 
 This is the phase that has no equivalent in the Nim process. Nothing in this
 repo needs editing. The work is dispatching `Nim Binaries Distribution` once
