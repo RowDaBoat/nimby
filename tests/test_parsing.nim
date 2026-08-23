@@ -103,4 +103,26 @@ doAssert parsed == ("my-package", "https://gitea.example.com/user/my-package", "
 parsed = parseGitUrl("https://github.com/treeform/shady.git#v1.0.0")
 doAssert parsed == ("shady", "https://github.com/treeform/shady.git", "v1.0.0"), "Version fragment"
 
+echo "Test 8: url requires keep operator characters that belong to the url"
+let path8 = getTempDir() / "test8.nimble"
+writeFile(path8, """
+version = "0.1.0"
+srcDir = "src"
+requires "file://C:\Users\RUNNER~1\AppData\Local\Temp\pkgs/dep"
+requires "https://github.com/treeform/shady >= 1.0"
+requires "bitty ~= 0.1.4"
+""")
+let n8 = parseNimbleFile(path8)
+doAssert n8.dependencies.len == 3
+doAssert n8.dependencies[0].url ==
+  r"file://C:\Users\RUNNER~1\AppData\Local\Temp\pkgs/dep",
+  "a ~ inside a url is part of the url: " & n8.dependencies[0].url
+doAssert n8.dependencies[0].name == "dep", n8.dependencies[0].name
+doAssert n8.dependencies[1].name == "shady"
+doAssert n8.dependencies[1].op == ">="
+doAssert n8.dependencies[1].version == "1.0"
+doAssert n8.dependencies[2].name == "bitty", "a ~ outside a url is still an operator"
+doAssert n8.dependencies[2].op == "~="
+removeFile(path8)
+
 echo "All parseNimbleFile and URL helper tests passed."

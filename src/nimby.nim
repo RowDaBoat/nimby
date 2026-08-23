@@ -355,7 +355,18 @@ proc parseNimbleFile*(fileName: string): NimbleFile =
       var dependency, op, version = ""
       while i < line.len and line[i] in [' ', '"']:
         inc i
-      while i < line.len and line[i] notin ['=', '<', '>', '~', '^', ' ', '"']:
+      # A url spec can contain operator characters: the Windows short path
+      # C:\Users\RUNNER~1 has a ~. Peek at the whole spec to decide whether
+      # they end the name or belong to it.
+      var peek = ""
+      var j = i
+      while j < line.len and line[j] notin [' ', '"']:
+        peek.add(line[j])
+        inc j
+      let stops =
+        if isGitUrl(peek): {' ', '"'}
+        else: {'=', '<', '>', '~', '^', ' ', '"'}
+      while i < line.len and line[i] notin stops:
         dependency.add(line[i])
         inc i
       while i < line.len and line[i] in [' ']:
