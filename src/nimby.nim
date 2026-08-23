@@ -45,14 +45,21 @@ var
   printLock: Lock
   jobLock: Lock
   retryLock: Lock
+  cloneLock: Lock
 
   jobQueue: Deque[string]
   jobsInProgress: HashSet[string]
-  jobsComplete: HashSet[string]
+  # Target directory names that have ever been enqueued. Keyed on the resolved
+  # name, not the raw argument, so the same package spelled two different ways
+  # is still one job. See targetNameOf.
+  jobsSeen: HashSet[string]
+
+  cloneCounter: int
 
 initLock(jobLock)
 initLock(printLock)
 initLock(retryLock)
+initLock(cloneLock)
 
 template withLock(lock: Lock, body: untyped) =
   ## Acquire the lock and execute the body.
@@ -429,13 +436,34 @@ proc promptYesNo(message: string, defaultYes: bool = true): bool =
 proc fetchPackage(argument: string) {.gcsafe.}
 proc addTreeToConfig(path: string) {.gcsafe.}
 
+proc targetNameOf(argument: string): string =
+  ## The on-disk directory name an enqueued argument will end up installing to.
+  ## Mirrors the dispatch in fetchPackage.
+  ##
+  ## Two arguments that name the same directory are the same job even when they
+  ## are spelled differently: one .nimble file can require a package by URL
+  ## (`requires "https://github.com/treeform/bitty"`) while another requires the
+  ## same package by bare name (`requires "bitty >= 0.1.4"`). Both clone into
+  ## `bitty`, so deduping has to happen on this name and not on the raw
+  ## argument, or two workers race on the same directory.
+  if argument.endsWith(".nimble"):
+    return argument.splitFile().name
+  if argument.contains(" "):
+    return argument.split(" ")[0]
+  if isGitUrl(argument):
+    return parseGitUrl(argument).packageName
+  return argument
+
 proc enqueuePackage(packageName: string) =
-  ## Add a package to the job queue. Ensure it is not already queued or in progress.
+  ## Add a package to the job queue. Ensure its target is not already queued,
+  ## in progress, or done.
   withLock(jobLock):
-    if packageName notin jobQueue and packageName notin jobsInProgress and packageName notin jobsComplete:
+    let target = targetNameOf(packageName)
+    if target notin jobsSeen:
+      jobsSeen.incl(target)
       jobQueue.addLast(packageName)
     else:
-      info &"Package already in queue: {packageName}"
+      info &"Package already in queue: {packageName} (target: {target})"
 
 proc enqueuePackage(dep: Dependency) =
   if dep.url != "":
@@ -494,7 +522,6 @@ proc worker(id: int) {.thread.} =
 
     withLock(jobLock):
       jobsInProgress.excl(pkg)
-      jobsComplete.incl(pkg)
 
 proc addConfigDir(path: string) =
   ## Add a directory to the nim.cfg file.
@@ -557,24 +584,65 @@ proc isCleanRepo(path: string): bool =
   let outstr = runOnce(&"git -C {path} status --porcelain")
   return outstr == ""
 
+proc cloneTempPath(path: string): string =
+  ## A unique staging directory to clone into, as a sibling of path so that
+  ## moving it into place afterwards is a same-filesystem rename.
+  var n: int
+  # Deliberately not jobLock: getGlobalPackages already clones while holding
+  # jobLock, so taking it on a clone path invites a deadlock later.
+  withLock(cloneLock):
+    inc cloneCounter
+    n = cloneCounter
+  let
+    parent = path.parentDir()
+    base = ".nimby-tmp-" & path.extractFilename() & "-" &
+      $getCurrentProcessId() & "-" & $n
+  if parent == "":
+    return base
+  return parent / base
+
 proc cloneRepo(rawUrl, path: string, nocheckout = false, branch = "") =
-  ## Clones a repo from a url into path, optionally on a target branch
+  ## Clones a repo from a url into path, optionally on a target branch.
+  ##
+  ## The clone runs into a staging directory and is moved into place only once
+  ## it has finished. `git clone` creates its destination up front and fills it
+  ## in as it goes, so cloning straight into path would make path exist while
+  ## still missing the .nimble file. Anything that treats dirExists(path) as
+  ## "installed" then reads a half-populated package. Staging keeps path
+  ## invisible until it is complete, which also means an interrupted install
+  ## leaves no unusable directory behind.
   let
     (_, url, fragment) = parseGitUrl(rawUrl)
     resolvedBranch = if branch != "": branch else: fragment
     branchFlag = if resolvedBranch != "": &" --branch {resolvedBranch}" else: ""
     noCheckoutFlag = if nocheckout: " --no-checkout" else: ""
     submodulesFlags = " --recurse-submodules --shallow-submodules"
-    gitCmd = &"git clone{noCheckoutFlag}{submodulesFlags} --depth 1{branchFlag} {url} {path}"
+    tempPath = cloneTempPath(path)
+    gitCmd = &"git clone{noCheckoutFlag}{submodulesFlags} --depth 1{branchFlag} {url} {tempPath}"
+
+  removeDir(tempPath)
+
   try:
     runOnce(gitCmd)
-  except:
+  except CatchableError as first:
     print "Error cloning " & url
-    print getCurrentExceptionMsg()
-    removeDir(path)
+    print first.msg
+    removeDir(tempPath)
     print "Retrying clone " & url
     sleep(100)
-    runOnce(gitCmd)
+    try:
+      runOnce(gitCmd)
+    except CatchableError as second:
+      removeDir(tempPath)
+      raise second
+
+  try:
+    moveDir(tempPath, path)
+  except CatchableError as e:
+    removeDir(tempPath)
+    if not dirExists(path):
+      raise e
+    info &"Package already in place, discarded staged clone: {path}"
 
 proc fetchPackage(argument: string) =
   ## Main recursive function to fetch a package and its dependencies.
