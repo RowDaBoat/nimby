@@ -46,7 +46,7 @@ proc testGitConfig() =
   createTestPackage(packageName)
   let
     gitLogCommand = "git -C " & quoteShell(packageDir) &
-      " log -1 --format='%an <%ae>'"
+      " log -1 --format=\"%an <%ae>\""
     (author, authorCode) = execCmdEx(gitLogCommand)
   doAssert authorCode == 0
   doAssert author.strip == "Tests <git@tests.com>"
