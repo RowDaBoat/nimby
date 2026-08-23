@@ -618,9 +618,13 @@ proc cloneRepo(rawUrl, path: string, nocheckout = false, branch = "") =
     noCheckoutFlag = if nocheckout: " --no-checkout" else: ""
     submodulesFlags = " --recurse-submodules --shallow-submodules"
     tempPath = cloneTempPath(path)
-    gitCmd = &"git clone{noCheckoutFlag}{submodulesFlags} --depth 1{branchFlag} {url} {tempPath}"
+    gitCmd = &"git clone --quiet{noCheckoutFlag}{submodulesFlags} --depth 1{branchFlag} {url} {tempPath}"
 
   removeDir(tempPath)
+
+  # git's own "Cloning into ..." would name the staging directory, which is an
+  # internal detail. Quiet git down and report the real destination instead.
+  print &"Cloning into '{path}'..."
 
   try:
     runOnce(gitCmd)
