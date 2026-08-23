@@ -20,12 +20,8 @@ type
   NimbleFileNotFound* = object of NimbyError
 
   Job = object
-    ## A queued unit of work. `name` is the identity, `argument` is the
-    ## instruction: the same package can be asked for as a bare name, as a
-    ## URL, or as a URL with a branch fragment, and the fragment has to survive
-    ## to the clone even though it must not take part in identity.
-    name: string      ## Package directory this job installs into.
-    argument: string  ## Original requirement string, acted on by fetchPackage.
+    name: string      ## Directory it installs into. The identity.
+    argument: string  ## Original requirement string, passed to fetchPackage.
 
   Dependency* = object
     name*: string
@@ -55,9 +51,7 @@ var
   retryLock: Lock
   cloneLock: Lock
 
-  # Queued, running, done. All three are keyed on the job name, never on the
-  # raw argument, so the same package spelled two different ways is one job in
-  # exactly one of these states. See jobNameOf.
+  # Queued, running, done. All keyed on job name, not on the raw argument.
   jobQueue: Deque[Job]
   jobsInProgress: HashSet[string]
   jobsComplete: HashSet[string]
@@ -445,16 +439,9 @@ proc fetchPackage(argument: string) {.gcsafe.}
 proc addTreeToConfig(path: string) {.gcsafe.}
 
 proc jobNameOf(argument: string): string =
-  ## The on-disk directory name an enqueued argument will end up installing to,
-  ## which is the job's identity.
-  ## Mirrors the dispatch in fetchPackage.
-  ##
-  ## Two arguments that name the same directory are the same job even when they
-  ## are spelled differently: one .nimble file can require a package by URL
-  ## (`requires "https://github.com/treeform/bitty"`) while another requires the
-  ## same package by bare name (`requires "bitty >= 0.1.4"`). Both clone into
-  ## `bitty`, so deduping has to happen on this name and not on the raw
-  ## argument, or two workers race on the same directory.
+  ## The directory an argument installs into, which is the job's identity.
+  ## Mirrors the dispatch in fetchPackage. The same package may be required
+  ## by URL, by URL with a branch, or by bare name.
   if argument.endsWith(".nimble"):
     return argument.splitFile().name
   if argument.contains(" "):
@@ -464,10 +451,7 @@ proc jobNameOf(argument: string): string =
   return argument
 
 proc isQueued(name: string): bool {.gcsafe.} =
-  ## Whether the queue already holds a job with this name. The queue holds jobs
-  ## rather than bare names, so this cannot be a plain `notin`. Left as a linear
-  ## scan: the queue is a handful of entries deep.
-  ##
+  ## Whether the queue already holds a job with this name.
   ## Must be called with jobLock held.
   {.gcsafe.}:
     for job in jobQueue:
@@ -476,8 +460,8 @@ proc isQueued(name: string): bool {.gcsafe.} =
   return false
 
 proc enqueuePackage(packageName: string) =
-  ## Add a package to the job queue. Ensure its job name is not already queued,
-  ## in progress, or complete.
+  ## Add a package to the job queue. Ensure its job name is not already
+  ## queued, in progress, or complete.
   withLock(jobLock):
     let name = jobNameOf(packageName)
     if not isQueued(name) and
@@ -495,7 +479,7 @@ proc enqueuePackage(dep: Dependency) =
     enqueuePackage(dep.name)
 
 proc popPackage(): Job =
-  ## Pop a job from the queue, or return an empty job if there is nothing to do.
+  ## Pop a job from the job queue or return an empty job.
   withLock(jobLock):
     if jobQueue.len > 0:
       result = jobQueue.popFirst()
@@ -607,11 +591,10 @@ proc isCleanRepo(path: string): bool =
   return outstr == ""
 
 proc cloneTempPath(path: string): string =
-  ## A unique staging directory to clone into, as a sibling of path so that
-  ## moving it into place afterwards is a same-filesystem rename.
+  ## A unique staging directory next to path, so the move into place is a
+  ## same-filesystem rename.
   var n: int
-  # Deliberately not jobLock: getGlobalPackages already clones while holding
-  # jobLock, so taking it on a clone path invites a deadlock later.
+  # Not jobLock: getGlobalPackages clones while holding it.
   withLock(cloneLock):
     inc cloneCounter
     n = cloneCounter
@@ -625,14 +608,8 @@ proc cloneTempPath(path: string): string =
 
 proc cloneRepo(rawUrl, path: string, nocheckout = false, branch = "") =
   ## Clones a repo from a url into path, optionally on a target branch.
-  ##
-  ## The clone runs into a staging directory and is moved into place only once
-  ## it has finished. `git clone` creates its destination up front and fills it
-  ## in as it goes, so cloning straight into path would make path exist while
-  ## still missing the .nimble file. Anything that treats dirExists(path) as
-  ## "installed" then reads a half-populated package. Staging keeps path
-  ## invisible until it is complete, which also means an interrupted install
-  ## leaves no unusable directory behind.
+  ## Staged in a temp dir and moved into place, so path never exists
+  ## half-populated.
   let
     (_, url, fragment) = parseGitUrl(rawUrl)
     resolvedBranch = if branch != "": branch else: fragment
@@ -644,8 +621,7 @@ proc cloneRepo(rawUrl, path: string, nocheckout = false, branch = "") =
 
   removeDir(tempPath)
 
-  # git's own "Cloning into ..." would name the staging directory, which is an
-  # internal detail. Quiet git down and report the real destination instead.
+  # git would name the staging dir here, so report the real destination.
   print &"Cloning into '{path}'..."
 
   try:

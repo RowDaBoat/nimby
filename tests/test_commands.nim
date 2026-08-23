@@ -344,8 +344,7 @@ suite "`nimby c` should":
     cmd("nimby create")
     createTestPackage("myapp")
     writeFile(testPackagesDir / "myapp" / "src" / "myapp.nim", "this is not valid nim\n")
-    # Not chained with `&&`: execCmdEx uses poEvalCommand, which on Windows
-    # bypasses the shell, so `&&` would be passed to `git add` as an argument.
+    # Not chained with `&&`: execCmdEx bypasses the shell on Windows.
     let packageDir = testPackagesDir / "myapp"
     discard execCmdEx("git add -A", workingDir = packageDir)
     discard execCmdEx(GitCommit & " -m \"broken source\"", workingDir = packageDir)
