@@ -1202,7 +1202,7 @@ when isMainModule:
     all = false
     p = initOptParser()
   let params = commandLineParams()
-  const nimCommands = ["c", "cpp", "js", "e", "doc", "check"]
+  const nimCommands = ["c", "cpp", "js", "r", "e", "doc", "check"]
   if params.len > 0 and params[0] in nimCommands:
     subcommand = params[0]
     arguments = params[1..^1]
@@ -1259,7 +1259,7 @@ when isMainModule:
       of "remove", "uninstall": removePackage(argument)
       of "list": listPackages(argument)
       of "tree": treePackages(argument)
-      of "c", "cpp", "js", "e", "doc", "check": verifyAndRun(subcommand, arguments)
+      of "c", "cpp", "js", "r", "e", "doc", "check": verifyAndRun(subcommand, arguments)
       of "lock": lockPackage(argument)
       of "use": installNim(argument)
       of "doctor": doctorPackage(argument)
