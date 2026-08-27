@@ -1,4 +1,9 @@
-import std/[osproc, strformat, strutils]
+import std/[os, osproc, strformat, strutils]
+
+let testWorkspace = getTempDir() / "nimby_readme_test"
+removeDir(testWorkspace)
+createDir(testWorkspace)
+discard execCmdEx("nimby create", workingDir = testWorkspace)
 
 let lines = readFile("README.md").splitLines()
 var i = 0
@@ -31,7 +36,7 @@ while i < lines.len:
       inc i
 
     echo &"readme:{line}: > {command.strip()}"
-    let (actual, code) = execCmdEx("sh", input = "set -e\n" & command)
+    let (actual, code) = execCmdEx("sh", input = "set -e\ncd " & testWorkspace & "\n" & command)
     if actual != "":
       echo actual.indent(4)
     if code != 0:

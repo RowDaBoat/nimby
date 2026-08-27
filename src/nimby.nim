@@ -305,6 +305,7 @@ proc writeHelp() =
   print "  c          compile project to C code"
   print "  cpp        compile project to C++ code"
   print "  js         compile project to Javascript"
+  print "  r          compile project and run with `arguments`"
   print "  e          run a Nimscript file"
   print "  doc        generate the documentation for inputfile"
   print "  check      checks the project for syntax and semantics"

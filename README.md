@@ -288,6 +288,7 @@ Compiler subcommands:
   c          compile project to C code
   cpp        compile project to C++ code
   js         compile project to Javascript
+  r          compile project and run with `arguments`
   e          run a Nimscript file
   doc        generate the documentation for inputfile
   check      checks the project for syntax and semantics
