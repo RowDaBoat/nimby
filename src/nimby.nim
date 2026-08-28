@@ -86,7 +86,9 @@ proc print(message: string) =
     echo message
 
 proc getGlobalNimbyDir(): string =
-  ## Get the global packages directory.
+  let env = getEnv("NIMBY_HOME")
+  if env.len > 0:
+    return env
   "~/.nimby".expandTilde()
 
 proc getGlobalPackagesDir(): string =
@@ -284,7 +286,7 @@ proc writeHelp() =
   ## Show the help message.
   print "Usage: nimby <subcommand> [options]"
   print "  ~ Minimal package manager for Nim. ~"
-  print "    -g, --global Install packages in the ~/.nimby/pkgs directory"
+  print "    -g, --global Install packages in the global packages directory (~/.nimby unless NIMBY_HOME is set)"
   print "    -v, --version print the version of Nimby"
   print "    -h, --help show this help message"
   print "    -V, --verbose print verbose output"
@@ -1111,7 +1113,7 @@ proc syncPackage(path: string) =
 proc installNim(nimVersion: string) =
   ## Install a specific version of Nim.
   info &"Installing Nim: {nimVersion}"
-  let nimbyDir = "~/.nimby".expandTilde()
+  let nimbyDir = getGlobalNimbyDir()
   if not dirExists(nimbyDir):
     createDir(nimbyDir)
   let installDir = nimbyDir / ("nim-" & nimVersion)
@@ -1258,7 +1260,7 @@ when isMainModule:
         assert(false) # cannot happen
 
   if not acquireGlobalLock():
-    quit("Nimby is already running, delete ~/.nimby/nimbylock to release lock")
+    quit("Nimby is already running, delete " & getGlobalNimbyDir() / lockDir & " to release lock")
 
   try:
     case subcommand

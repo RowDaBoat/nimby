@@ -2,6 +2,7 @@ import std/[os, osproc, strutils, sequtils, tables, strformat, unittest]
 import testpackage
 
 let testWorkspace* = getTempDir() / "nimby_tests"
+let nimbyHome* = getTempDir() / "nimby_home"
 
 proc cmdAt*(workingDir, command: string): string {.discardable.} =
   ## Runs a shell command in a test directory, echoes output and returns it.
@@ -37,8 +38,9 @@ proc branch(repo: string): string =
 proc clean() =
   ## Resets the test workspace and global nimby directories.
   setCurrentDir(getTempDir())
-  removeDir(expandTilde("~/.nimby/nimbylock"))
-  removeDir(expandTilde("~/.nimby/pkgs"))
+  removeDir(nimbyHome)
+  createDir(nimbyHome)
+  putEnv("NIMBY_HOME", nimbyHome)
   removeDir(testWorkspace)
   createDir(testWorkspace)
   setCurrentDir(testWorkspace)
@@ -132,7 +134,7 @@ suite "`nimby install` should":
   test "create the package globally when used with `-g`":
     cmd("nimby install -g -V mummy")
     check not dirExists("mummy")
-    check dirExists(expandTilde("~/.nimby/pkgs/mummy"))
+    check dirExists(nimbyHome / "pkgs" / "mummy")
 
   test "record the global package in the workspace nim.cfg":
     cmd("nimby install -g mummy")
@@ -430,7 +432,7 @@ suite "`nimby update` should":
   test "update global packages with -g":
     cmd("nimby install -g https://github.com/RowDaBoat/nimbytestpackage.git")
     let
-      repoPath = expandTilde("~/.nimby/pkgs/nimbytestpackage")
+      repoPath = nimbyHome / "pkgs" / "nimbytestpackage"
       present = rewindPackage(repoPath, "HEAD^")
 
     cmd("nimby update nimbytestpackage")
@@ -442,7 +444,7 @@ suite "`nimby update` should":
     cmd("nimby install -g https://github.com/treeform/bitty.git")
     cmd("nimby install https://github.com/RowDaBoat/nimbytestpackage.git")
     let
-      bittyPath = expandTilde("~/.nimby/pkgs/bitty")
+      bittyPath = nimbyHome / "pkgs" / "bitty"
       ntpPath = "nimbytestpackage"
       bittyPresent = rewindPackage(bittyPath, "HEAD^", "master")
       ntpPresent = rewindPackage(ntpPath, "HEAD^")
@@ -549,3 +551,15 @@ suite "`nimby doctor` should":
     let output = cmdAt(nested, "nimby doctor")
     check output.contains("stray/")
     check output.contains("not linked in nim.cfg")
+
+suite "NIMBY_HOME environment variable":
+  setup:
+    setupTestPackages()
+    clean()
+
+  test "global install with -g uses NIMBY_HOME when set":
+    let customHome = getTempDir() / "nimby_custom_home"
+    removeDir(customHome)
+    cmd("nimby create")
+    cmdAt(testWorkspace, "NIMBY_HOME=" & customHome & " nimby install -g -V mummy")
+    check dirExists(customHome / "pkgs" / "mummy")
