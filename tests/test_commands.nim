@@ -560,6 +560,8 @@ suite "NIMBY_HOME environment variable":
   test "global install with -g uses NIMBY_HOME when set":
     let customHome = getTempDir() / "nimby_custom_home"
     removeDir(customHome)
+    putEnv("NIMBY_HOME", customHome)
     cmd("nimby create")
-    cmdAt(testWorkspace, "NIMBY_HOME=" & customHome & " nimby install -g -V mummy")
+    cmd("nimby install -g -V mummy")
+    putEnv("NIMBY_HOME", nimbyHome)
     check dirExists(customHome / "pkgs" / "mummy")
