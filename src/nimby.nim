@@ -960,21 +960,21 @@ proc checkMissingDeps(name: string) =
   ## Check that all dependencies listed in .nimble are present.
   let nimblePath = name / name & ".nimble"
   if not fileExists(nimblePath):
-    print &"Package `{name}` has no .nimble file."
-    print &"  Run: nimby remove {name}"
+    print &"Package `{name}` has no .nimble file"
+    print &"  Run: 'nimby remove {name}'"
     return
   let nimbleFile = parseNimbleFile(nimblePath)
   for dependency in nimbleFile.dependencies:
     if not dirExists(dependency.name):
-      print &"Dependency `{dependency.name}` not found for package `{name}`."
-      print &"  Run: nimby install {dependency.name}"
+      print &"Dependency `{dependency.name}` not found for package `{name}`"
+      print &"  Run: 'nimby install {dependency.name}'"
 
 proc checkNimCfgLinking(name: string) =
   ## Check that the package has a --path entry in nim.cfg.
   let nimCfg = readFileSafe(workspaceFile)
   if not nimCfg.contains(&"--path:\"{name}/") and not nimCfg.contains(&"--path:\"{name}\""):
-    print &"Package `{name}` not linked in nim.cfg."
-    print &"  Run: nimby install {name}"
+    print &"Package `{name}` not linked in nim.cfg"
+    print &"  Run: 'nimby install {name}'"
 
 proc checkNimCfgFormat(lines: seq[string]): seq[string] =
   ## Check nim.cfg lines are valid --path entries, return package names.
@@ -987,13 +987,13 @@ proc checkNimCfgFormat(lines: seq[string]): seq[string] =
     else:
       if line != "":
         print &"Unexpected line in nim.cfg: \"{line}\""
-        print &"  Remove the line manually from nim.cfg."
+        print &"  Remove the line manually from nim.cfg"
 
 proc checkPackageDirExists(name: string) =
   ## Check that the package directory exists on disk.
   if not dirExists(name):
-    print &"Package `{name}` is linked in nim.cfg but missing from disk."
-    print &"  Run: nimby install {name}"
+    print &"Package `{name}` is linked in nim.cfg but missing from disk"
+    print &"  Run: 'nimby install {name}'"
 
 proc checkOrphanDirs(names: seq[string]) =
   ## Check for directories not referenced in nim.cfg.
@@ -1007,7 +1007,7 @@ proc checkOrphanDirs(names: seq[string]) =
     print &"{orphans.len} dir(s) not linked in nim.cfg:"
     for dir in orphans:
       print &"  {dir}/"
-    print &"  Run: nimby install <package> to link, or remove the directory."
+    print &"  Run: 'nimby install <package>' to link, or remove the directory"
 
 proc doctorPackage(name: string) =
   ## Diagnose packages and fix configuration issues.
@@ -1016,7 +1016,7 @@ proc doctorPackage(name: string) =
 
   if name != "":
     if not dirExists(name):
-      nimbyQuit(&"Package `{name}` not found.")
+      nimbyQuit(&"Package `{name}` not found")
     checkMissingDeps(name)
     checkNimCfgLinking(name)
     return
@@ -1053,14 +1053,14 @@ proc lockPackage(name: string) =
           walkDeps(dependency.name, false)
     walkDeps(name, true)
   except NimbleFileNotFound as e:
-    let errorMessage = &"Can't generate a lock file for '{name}'.\n"
+    let errorMessage = &"Can't generate a lock file for '{name}'\n"
     nimbyQuit(errorMessage & e.msg)
 
 proc verifyAndRun(nimCommand: string, arguments: seq[string]) =
   let dir = getCurrentDir()
   let lockPath = dir / "nimby.lock"
   if not fileExists(lockPath):
-    nimbyQuit("No nimby.lock file found in the current directory.")
+    nimbyQuit("No nimby.lock file found in the current directory")
 
   let workspace = findWorkspace(dir, autoCreate = false)
 
@@ -1073,15 +1073,23 @@ proc verifyAndRun(nimCommand: string, arguments: seq[string]) =
       expectedHash = parts[3]
       packagePath = workspace / name
     if not dirExists(packagePath):
-      nimbyQuit(&"Dependency `{name}` not found in workspace.")
+      nimbyQuit(&"Dependency `{name}` not found in workspace")
     if not isCleanRepo(packagePath):
-      nimbyQuit(&"Dependency `{name}` has uncommitted changes.")
+      nimbyQuit(&"Dependency `{name}` has uncommitted changes")
     let actualHash = runOnce(&"git -C {packagePath} rev-parse HEAD")
     if actualHash != expectedHash:
-      nimbyQuit(&"Dependency `{name}` is not at the locked commit.")
+      nimbyQuit(&"Dependency `{name}` is not at the locked commit")
+
+  let nimbyDir = getGlobalNimbyDir()
+  let nimBin = nimbyDir / "nim" / "bin" / "nim"
+  if not fileExists(nimBin):
+    nimbyQuit(
+      &"Nim is not installed at: {nimbyDir}\n" &
+      "  Run: `nimby use <version>` to install it."
+    )
 
   let nimArgs = arguments.join(" ")
-  let output = runOnce(&"nim {nimCommand} {nimArgs}")
+  let output = runOnce(&"{nimBin} {nimCommand} {nimArgs}")
   if output != "":
     print output
 
@@ -1093,7 +1101,7 @@ proc syncPackage(path: string) =
   timeStart()
 
   if not fileExists(lockPath):
-    nimbyQuit(&"Package lock file `{lockPath}` not found.")
+    nimbyQuit(&"Package lock file `{lockPath}` not found")
 
   for line in readFileSafe(lockPath).splitLines():
     let parts = line.split(" ")

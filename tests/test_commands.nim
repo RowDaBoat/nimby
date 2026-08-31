@@ -35,20 +35,40 @@ proc cmdFail*(command: string): string {.discardable.} =
 proc branch(repo: string): string =
   cmd(&"git -C {repo} rev-parse --abbrev-ref HEAD").strip
 
-proc clean() =
-  ## Resets the test workspace and global nimby directories.
+proc setupEnvironment(installNim: bool = true) =
   setCurrentDir(getTempDir())
-  removeDir(nimbyHome)
-  createDir(nimbyHome)
+  removeDir(nimbyHome / "nimbylock")
+  removeDir(nimbyHome / "pkgs")
   putEnv("NIMBY_HOME", nimbyHome)
+  if installNim:
+    cmd("nimby use 2.2.10")
   removeDir(testWorkspace)
   createDir(testWorkspace)
   setCurrentDir(testWorkspace)
 
+suite "`nimby use` should":
+  setup:
+    setupTestPackages()
+    setupEnvironment(installNim = false)
+
+  test "install nim into NIMBY_HOME":
+    cmd("nimby use 2.2.10")
+    check fileExists(nimbyHome / "nim" / "bin" / "nim")
+
+  test "fail when nim is not installed":
+    removeDir(nimbyHome / "nim")
+    cmd("nimby create")
+    createTestPackage("myapp")
+    cmd(&"nimby install file://{testPackagesDir}/myapp")
+    writeFile(testWorkspace / "myapp" / "nimby.lock", "")
+    let output = cmdFailAt(testWorkspace / "myapp", "nimby c src/myapp.nim")
+    check output.contains("Nim is not installed")
+    check output.contains("nimby use")
+
 suite "`nimby create` should":
   setup:
     setupTestPackages()
-    clean()
+    setupEnvironment()
 
   test "create a workspace in the current directory":
     cmd("nimby create")
@@ -107,7 +127,7 @@ suite "`nimby create` should":
 suite "`nimby install` should":
   setup:
     setupTestPackages()
-    clean()
+    setupEnvironment()
 
   test "require a package argument":
     let output = cmdFail("nimby install")
@@ -275,7 +295,7 @@ suite "`nimby install` should":
 suite "`nimby lock` should":
   setup:
     setupTestPackages()
-    clean()
+    setupEnvironment()
 
   test "include dependencies in the package with their corresponding URLs":
     cmd("nimby install https://github.com/RowDaBoat/nimbytestpackage.git")
@@ -297,10 +317,11 @@ suite "`nimby lock` should":
 
     check not actual.contains("nimbytestpackage")
 
+
 suite "`nimby c` should":
   setup:
     setupTestPackages()
-    clean()
+    setupEnvironment()
 
   test "fail when no lock file is present":
     cmd("nimby create")
@@ -403,7 +424,7 @@ suite "`nimby c` should":
 suite "`nimby update` should":
   setup:
     setupTestPackages()
-    clean()
+    setupEnvironment()
   proc getCommit(repo: string): string =
     ## Returns the current HEAD commit hash for the given repo.
     cmd(&"git -C {repo} rev-parse HEAD").strip
@@ -461,7 +482,7 @@ suite "`nimby update` should":
 suite "`nimby doctor` should":
   setup:
     setupTestPackages()
-    clean()
+    setupEnvironment()
 
   test "fail when no workspace exists":
     let output = cmdFail("nimby doctor")
@@ -555,7 +576,7 @@ suite "`nimby doctor` should":
 suite "NIMBY_HOME environment variable":
   setup:
     setupTestPackages()
-    clean()
+    setupEnvironment()
 
   test "global install with -g uses NIMBY_HOME when set":
     let customHome = getTempDir() / "nimby_custom_home"
