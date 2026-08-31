@@ -1081,7 +1081,7 @@ proc verifyAndRun(nimCommand: string, arguments: seq[string]) =
       nimbyQuit(&"Dependency `{name}` is not at the locked commit")
 
   let nimbyDir = getGlobalNimbyDir()
-  let nimBin = nimbyDir / "nim" / "bin" / "nim"
+  let nimBin = nimbyDir / "nim" / "bin" / ("nim" & ExeExt)
   if not fileExists(nimBin):
     nimbyQuit(
       &"Nim is not installed at: {nimbyDir}\n" &
