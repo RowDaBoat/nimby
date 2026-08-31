@@ -53,7 +53,7 @@ suite "`nimby use` should":
 
   test "install nim into NIMBY_HOME":
     cmd("nimby use 2.2.10")
-    check fileExists(nimbyHome / "nim" / "bin" / ("nim" & ExeExt))
+    check fileExists(nimbyHome / "nim" / "bin" / addFileExt("nim", ExeExt))
 
   test "fail when nim is not installed":
     removeDir(nimbyHome / "nim")
