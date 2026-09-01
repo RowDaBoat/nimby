@@ -87,9 +87,9 @@ proc print(message: string) =
 
 proc getGlobalNimbyDir(): string =
   let env = getEnv("NIMBY_HOME")
-  if env.len > 0:
-    return env
-  "~/.nimby".expandTilde()
+  if env.len == 0:
+   result = "~/.nimby".expandTilde()
+  result = env.expandTilde().absolutePath()
 
 proc getGlobalPackagesDir(): string =
   ## Get the global packages directory.
@@ -227,13 +227,11 @@ proc findWorkspace*(startDir: string = getCurrentDir(), autoCreate = true): stri
   createWorkspace(startDir, announce = false)
   return startDir
 
-proc runOnce(command: string): string {.discardable.} =
-  # Returns stdout
-  let exeName = command.split(" ")[0]
-  let args = command.split(" ")[1..^1]
+proc runOnce(exe: string, args: openArray[string] = []): string {.discardable.} =
+  let command = exe & " " & args.join(" ")
   try:
     let
-      p = startProcess(exeName, args=args, options={poUsePath})
+      p = startProcess(exe, args= @(args.toSeq), options={poUsePath})
       exitCode = p.waitForExit(-1)
       outstr = p.peekableOutputStream().readAll()
       errstr = p.peekableErrorStream().readAll()
@@ -249,20 +247,19 @@ proc runOnce(command: string): string {.discardable.} =
   except:
     raise newException(NimbyError, "error running command `" & command & "`: " & $getCurrentExceptionMsg())
 
-proc runSafe(command: string) =
-  ## Run the command and print the output if it fails.
+proc runSafe(exe: string, args: openArray[string]) =
+  let command = exe & " " & args.join(" ")
   try:
     when defined(monkey):
       if rand(100) < MonkeyProbability:
         raise newException(NimbyError, "error starting process `" & command & "`: " & "Monkey error")
-    runOnce(command)
+    runOnce(exe, args)
   except:
-    # Lock is normally not needed, but if we are retrying, lets be double safe.
     withLock(retryLock):
       for trying in 2 .. 3:
         print &"Try {trying} of 3: {getCurrentExceptionMsg()}"
         try:
-          runOnce(command)
+          runOnce(exe, args)
           return
         except:
           sleep(100 * trying)
@@ -416,12 +413,12 @@ proc getGlobalPackages(): JsonNode =
     if not updatedGlobalPackages:
       if not fileExists(globalPackagesDir / "packages.json"):
         info "Packages.json not found, cloning..."
-        runOnce(&"git clone https://github.com/nim-lang/packages.git --depth 1 {globalPackagesDir}")
+        runOnce("git", ["clone", "https://github.com/nim-lang/packages.git", "--depth", "1", globalPackagesDir])
         updatedGlobalPackages = true
       else:
         if not updatedGlobalPackages:
           info "Packages.json found, pulling..."
-          runSafe(&"git -C {globalPackagesDir} pull")
+          runSafe("git", ["-C", globalPackagesDir, "pull"])
         updatedGlobalPackages = true
 
   return readFileSafe(globalPackagesDir & "/packages.json").parseJson()
@@ -503,7 +500,7 @@ proc readGitHash(name: string): string =
   let globalPath = getGlobalPackagesDir() / name
   for path in [name, globalPath]:
     if dirExists(path):
-      return runOnce(&"git -C {path} rev-parse HEAD")
+      return runOnce("git", ["-C", path, "rev-parse", "HEAD"])
   return ""
 
 proc readPackageUrl(name: string): string =
@@ -598,7 +595,7 @@ proc addTreeToConfig(path: string) =
     nimbyQuit(errorMessage & e.msg)
 
 proc isCleanRepo(path: string): bool =
-  let outstr = runOnce(&"git -C {path} status --porcelain")
+  let outstr = runOnce("git", ["-C", path, "status", "--porcelain"])
   return outstr == ""
 
 proc cloneTempPath(path: string): string =
@@ -624,19 +621,21 @@ proc cloneRepo(rawUrl, path: string, nocheckout = false, branch = "") =
   let
     (_, url, fragment) = parseGitUrl(rawUrl)
     resolvedBranch = if branch != "": branch else: fragment
-    branchFlag = if resolvedBranch != "": &" --branch {resolvedBranch}" else: ""
-    noCheckoutFlag = if nocheckout: " --no-checkout" else: ""
-    submodulesFlags = " --recurse-submodules --shallow-submodules"
     tempPath = cloneTempPath(path)
-    gitCmd = &"git clone --quiet{noCheckoutFlag}{submodulesFlags} --depth 1{branchFlag} {url} {tempPath}"
+  var gitArgs = @["clone", "--quiet"]
+  if nocheckout:
+    gitArgs.add "--no-checkout"
+  gitArgs.add ["--recurse-submodules", "--shallow-submodules", "--depth", "1"]
+  if resolvedBranch != "":
+    gitArgs.add ["--branch", resolvedBranch]
+  gitArgs.add [url, tempPath]
 
   removeDir(tempPath)
 
-  # git would name the staging dir here, so report the real destination.
   print &"Cloning into '{path}'..."
 
   try:
-    runOnce(gitCmd)
+    runOnce("git", gitArgs)
   except CatchableError as first:
     print "Error cloning " & url
     print first.msg
@@ -644,7 +643,7 @@ proc cloneRepo(rawUrl, path: string, nocheckout = false, branch = "") =
     print "Retrying clone " & url
     sleep(100)
     try:
-      runOnce(gitCmd)
+      runOnce("git", gitArgs)
     except CatchableError as second:
       removeDir(tempPath)
       raise second
@@ -692,16 +691,16 @@ proc fetchPackage(spec: string) =
     if not dirExists(packagePath):
       # Clone the package from the URL at the given Git hash.
       cloneRepo(packageUrl, packagePath, nocheckout = true)
-      runSafe(&"git -C {packagePath} fetch --depth 1 origin {packageGitHash}")
-      runOnce(&"git -C {packagePath} checkout {packageGitHash}")
+      runSafe("git", ["-C", packagePath, "fetch", "--depth", "1", "origin", packageGitHash])
+      runOnce("git", ["-C", packagePath, "checkout", packageGitHash])
       print &"Installed package: {name}"
     else:
       if isCleanRepo(packagePath):
         # Check whether the package is at the given Git hash.
         let gitHash = readGitHash(name)
         if gitHash != packageGitHash:
-          runSafe(&"git -C {packagePath} fetch --depth 1 origin {packageGitHash}")
-          runOnce(&"git -C {packagePath} checkout {packageGitHash}")
+          runSafe("git", ["-C", packagePath, "fetch", "--depth", "1", "origin", packageGitHash])
+          runOnce("git", ["-C", packagePath, "checkout", packageGitHash])
           print &"Updated package: {name}"
         else:
           info &"Package {name} has the correct hash."
@@ -835,7 +834,7 @@ proc updatePackage(packageFilePath: string, name: string) =
   if not dirExists(packagePath):
     nimbyQuit(&"Package not found: {packagePath}")
 
-  runSafe(&"git -C {packagePath} pull")
+  runSafe("git", ["-C", packagePath, "pull"])
   print &"Updated package: {name}"
 
 proc updateSinglePackage(name: string) =
@@ -1076,7 +1075,7 @@ proc verifyAndRun(nimCommand: string, arguments: seq[string]) =
       nimbyQuit(&"Dependency `{name}` not found in workspace")
     if not isCleanRepo(packagePath):
       nimbyQuit(&"Dependency `{name}` has uncommitted changes")
-    let actualHash = runOnce(&"git -C {packagePath} rev-parse HEAD")
+    let actualHash = runOnce("git", ["-C", packagePath, "rev-parse", "HEAD"])
     if actualHash != expectedHash:
       nimbyQuit(&"Dependency `{name}` is not at the locked commit")
 
@@ -1088,8 +1087,7 @@ proc verifyAndRun(nimCommand: string, arguments: seq[string]) =
       "  Run: `nimby use <version>` to install it."
     )
 
-  let nimArgs = arguments.join(" ")
-  let output = runOnce(&"{nimBin} {nimCommand} {nimArgs}")
+  let output = runOnce(nimBin, @[nimCommand] & arguments)
   if output != "":
     print output
 
@@ -1135,12 +1133,12 @@ proc installNim(nimVersion: string) =
     setCurrentDir(installDir)
 
     if source:
-      runOnce(&"git clone https://github.com/nim-lang/Nim.git --branch v{nimVersion} --depth 1 {installDir}")
+      runOnce("git", ["clone", "https://github.com/nim-lang/Nim.git", "--branch", &"v{nimVersion}", "--depth", "1", installDir])
       setCurrentDir(installDir)
       when defined(windows):
-        runSafe("build_all.bat")
+        runSafe("build_all.bat", [])
       else:
-        runSafe("./build_all.sh")
+        runSafe("./build_all.sh", [])
       let keepDirsAndFiles = @[
           "bin",
           "compiler",
@@ -1159,8 +1157,8 @@ proc installNim(nimVersion: string) =
       when defined(windows):
         let url = &"https://github.com/treeform/nimby-nim-builds/releases/download/{nimVersion}/nim-{nimVersion}-Windows-X64.zip"
         print &"Downloading: {url}"
-        runSafe(&"curl -sSL {url} -o nim.zip")
-        runSafe("powershell -NoProfile -Command Expand-Archive -Force -Path nim.zip -DestinationPath .")
+        runSafe("curl", ["-sSL", url, "-o", "nim.zip"])
+        runSafe("powershell", ["-NoProfile", "-Command", "Expand-Archive -Force -Path nim.zip -DestinationPath ."])
         let extractedDir = &"nim-{nimVersion}-Windows-X64"
         if dirExists(extractedDir):
           for kind, path in walkDir(extractedDir):
@@ -1174,9 +1172,9 @@ proc installNim(nimVersion: string) =
       elif defined(macosx):
         let url = &"https://github.com/treeform/nimby-nim-builds/releases/download/{nimVersion}/nim-{nimVersion}-macOS-ARM64.tar.gz"
         print &"Downloading: {url}"
-        runSafe(&"curl -sSL {url} -o nim.tar.gz")
+        runSafe("curl", ["-sSL", url, "-o", "nim.tar.gz"])
         print "Extracting the Nim compiler"
-        runSafe("tar xf nim.tar.gz --strip-components=1")
+        runSafe("tar", ["xf", "nim.tar.gz", "--strip-components=1"])
 
       elif defined(linux):
         when defined(arm64):
@@ -1184,9 +1182,9 @@ proc installNim(nimVersion: string) =
         else:
           let url = &"https://github.com/treeform/nimby-nim-builds/releases/download/{nimVersion}/nim-{nimVersion}-Linux-X64.tar.gz"
         print &"Downloading: {url}"
-        runSafe(&"curl -sSL {url} -o nim.tar.gz")
+        runSafe("curl", ["-sSL", url, "-o", "nim.tar.gz"])
         print "Extracting the Nim compiler"
-        runSafe("tar xf nim.tar.gz --strip-components=1")
+        runSafe("tar", ["xf", "nim.tar.gz", "--strip-components=1"])
 
       else:
         nimbyQuit "Unsupported platform for Nim installation"
@@ -1203,7 +1201,7 @@ proc installNim(nimVersion: string) =
 
   when not defined(windows):
     # Make sure the Nim binary is executable.
-    runSafe(&"chmod +x {globalNimDir}/bin/nim")
+    runSafe("chmod", ["+x", globalNimDir / "bin" / "nim"])
 
   # Tell the user a single PATH change they can run now.
   let pathEnv = getEnv("PATH")

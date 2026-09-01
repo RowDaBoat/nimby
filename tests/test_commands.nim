@@ -156,6 +156,16 @@ suite "`nimby install` should":
     check not dirExists("mummy")
     check dirExists(nimbyHome / "pkgs" / "mummy")
 
+  test "install globally when NIMBY_HOME has spaces":
+    let spacedHome = getTempDir() / "nimby home with spaces"
+    removeDir(spacedHome)
+    putEnv("NIMBY_HOME", spacedHome)
+    cmd("nimby use 2.2.10")
+    cmd("nimby install -g -V mummy")
+    check dirExists(spacedHome / "pkgs" / "mummy")
+    removeDir(spacedHome)
+    putEnv("NIMBY_HOME", nimbyHome)
+
   test "record the global package in the workspace nim.cfg":
     cmd("nimby install -g mummy")
     let nimCfg = readFile(testWorkspace / "nim.cfg")
@@ -409,6 +419,20 @@ suite "`nimby c` should":
     writeFile(testWorkspace / "myapp" / "nimby.lock", "")
 
     cmdAt(testWorkspace / "myapp", "nimby c -d:release src/myapp.nim")
+
+  test "compile when NIMBY_HOME has spaces":
+    let spacedHome = getTempDir() / "nimby home with spaces"
+    removeDir(spacedHome)
+    putEnv("NIMBY_HOME", spacedHome)
+    cmd("nimby use 2.2.10")
+    cmd("nimby create")
+    createTestPackage("myapp")
+    cmd(&"nimby install file://{testPackagesDir}/myapp")
+    writeFile(testWorkspace / "myapp" / "nimby.lock", "")
+
+    cmdAt(testWorkspace / "myapp", "nimby c src/myapp.nim")
+    removeDir(spacedHome)
+    putEnv("NIMBY_HOME", nimbyHome)
 
   test "dispatch cpp, js, doc, and check to nim":
     cmd("nimby create")
